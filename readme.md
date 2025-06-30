@@ -21,17 +21,19 @@ sudo apt update
 sudo apt install g++ make
 ```
 
-## O que o código implementou
+## O que o código implementa
 
-O cliente implementa o handshake de três vias conforme especificado no PDF: envia um pacote de CONNECT, aguarda o pacote de ACCEPT do servidor, atualiza número de sequência (seqnum) e janela remota, e então entra em modo conectado.
+O cliente cobre **todas** as transições descritas no PDF. Na partida ele executa o three‑way handshake completo: manda um CONNECT (SYN), recebe o SETUP (SYN‑ACK) com `ACCEPT`, confirma janela e sequência remota e passa a utilizar o `sid` fornecido pelo servidor. Todo cabeçalho trocado é mostrado numa moldura unicode para facilitar depuração.
 
-Para envio de dados, o cliente fragmenta automaticamente mensagens maiores que MAX_DATA, atribuindo a cada fragmento um identificador de fragmento (FID) e offset (FO), e marca o flag MOREBITS enquanto houver continuação. A cada fragmento, aguarda um ACK correspondente antes de prosseguir, e mantém controle de bytes em voo e janela do peer.
+Durante a transferência o envio respeita uma janela deslizante. Cada pacote em voo é registado numa fila interna; quando chega um ACK o pacote é removido e `bytesInFlight` é descontado, permitindo que a janela se abra novamente. Se um ACK nunca vier, um cronômetro de 1s por entrada aciona até três retransmissões, depois o fragmento é descartado - assim mantemos o canal vivo mesmo sob perda.
 
-O cliente também suporta “pure ACK”: caso seja necessário apenas confirmar pacotes sem enviar dados, o seqnum **não** é incrementado (seqnum == acknum), respeitando a recomendação de não misturar ACKs puros com incremento de sequência.
+Quando apenas precisamos confirmar recepção, o cliente produz um **pure‑ACK**: o campo `flags` leva só `ACK`, não há payload nem incremento de `seqnum` (o valor fica igual a `acknum`), exatamente como a página 4 das especificações do projeto exige.
 
-As operações de disconnect (x) e revive (r) seguem o protocolo descrito na página 4 do PDF: o disconnect envia flags CONNECT|REVIVE|ACK sem payload, e revive zero-way envia REVIVE|AC` com payload opcional (ou “revive” por padrão), restabelecendo a sessão sem novo handshake completo.
+O envio de dados decide entre modo direto e fragmentado. Se a mensagem couber na janela e em `MAX_DATA`, vai num único datagrama e o terminal exibe “Enviando mensagem sem fragmentar”. Se ultrapassar qualquer limite, a rotina parte o payload em blocos de até 1440B, atribui um `FID` único e incrementa `FO` a cada fragmento, marcando `MOREBITS` até o último bloco. Cada fragmento respeita a janela corrente; se ela fechar o processo estaciona, transmite um pure‑ACK para acelerar a liberação e só prossegue depois de espaço disponível. A cada passo prints exibem qual fragmento está saindo e um trecho do conteúdo.
 
-Além disso, o cliente traz tela interativa com caixa Unicode para visualizar cabeçalhos de pacotes, payload preview e comandos auxiliares (?, h).
+O disconnect emprega a combinação `CONNECT|REVIVE|ACK` com janela 0 para encerrar a sessão de forma limpa. O zero‑way revive aceita uma mensagem opcional do utilizador, envia‑a com `REVIVE|ACK`, atualiza a sequência local com o ACK do servidor e restaura todos os contadores, reatando a conversa sem novo handshake.
+
+Por fim, há timeout de recepção global de 5 s – se não houver actividade o `select()` retorna e a app pode decidir retransmitir, abortar ou apenas avisar o utilizador. Todos os eventos relevantes (“retransmitindo”, “janela atualizada”, “fragmentação concluída”) aparecem no log.
 
 ## Compilação
 
