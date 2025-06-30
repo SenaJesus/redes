@@ -1,4 +1,4 @@
-# SLOW - Cliente Interativo
+# Protocolo SLOW - Cliente Interativo
 
 ## Autores
 
