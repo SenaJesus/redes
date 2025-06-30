@@ -2,7 +2,6 @@
 #include "session_manager.h"
 #include "packet.h"
 #include "slow.h"
-
 #include <arpa/inet.h>
 #include <iomanip>
 #include <iostream>
@@ -10,12 +9,28 @@
 #include <string>
 #include <vector>
 #include <limits>
+
+/**
+ * @file    main.cpp
+ * @brief   Cliente interativo do protocolo SLOW.
+ *
+ * Este programa implementa um cliente que se conecta a um servidor SLOW via UDP,
+ * realizando o 3-way handshake, enviando mensagens com fragmentação quando necessário,
+ * controlando janelas de envio/recepção, retransmitindo pacotes e mantendo a sessão
+ * ativa via ACKs. Também permite reviver sessões com base no UUID previamente atribuído.
+ *
+ * Os comandos disponíveis no terminal permitem testar os comportamentos essenciais do
+ * protocolo: envio confiável, controle de fluxo, desconexão limpa e revive.
+ */
 using namespace std;
 
 constexpr auto TL = u8"\u2554", TR = u8"\u2557";
 constexpr auto BL = u8"\u255A", BR = u8"\u255D";
 constexpr auto HL = u8"\u2550", VL = u8"\u2551";
 
+/**
+ * @brief Imprime uma linha horizontal com borda e título.
+ */
 inline void hLine(const char* l, const char* r, int w, const string& t = "") {
     cout << l;
     if (!t.empty()) cout << ' ' << t << ' ';
@@ -24,6 +39,9 @@ inline void hLine(const char* l, const char* r, int w, const string& t = "") {
     cout << r << '\n';
 }
 
+/**
+ * @brief Imprime uma linha vertical com conteúdo centralizado.
+ */
 inline void vLine(const string& body, int w) {
     cout << VL << ' ' << body;
     int pad = w - 3 - int(body.size());
@@ -31,6 +49,9 @@ inline void vLine(const string& body, int w) {
     cout << VL << '\n';
 }
 
+/**
+ * @brief Mostra as informações de um pacote em formato de "caixa".
+ */
 inline void printPktBox(const string& tag, const SlowPacket& p) {
     ios old(nullptr); old.copyfmt(cout);
     vector<string> rows; stringstream ss;
@@ -59,6 +80,9 @@ inline void printPktBox(const string& tag, const SlowPacket& p) {
     cout.copyfmt(old);
 }
 
+/**
+ * @brief Exibe o menu principal de comandos disponíveis.
+ */
 inline void banner() {
     cout << "\n================= S L O W   C L I E N T =================\n"
             "  d) data     x) disconnect     r) revive     ? ) status\n"
@@ -66,11 +90,17 @@ inline void banner() {
             "=========================================================\n> ";
 }
 
+/**
+ * @brief Mostra a ajuda textual com todos os comandos.
+ */
 inline void help() {
     cout << "\nd) enviar mensagem   x) disconnect   r) revive\n"
             "?) status            h) ajuda        q) sair\n";
 }
 
+/**
+ * @brief Imprime o status atual da sessão e conexão.
+ */
 static void showStatus(const Session& s, bool conn, const char* host, int port) {
     ostringstream ss;
     ss << "Servidor : " << host << ':' << port << '\n'
@@ -88,6 +118,9 @@ static void showStatus(const Session& s, bool conn, const char* host, int port) 
     cout << "└" << bord << "┘\n\n";
 }
 
+/**
+ * @brief Envia um pacote ACK puro para manter a sessão ativa ou atualizar janela.
+ */
 static void sendPureAck(Network& net, const sockaddr_in& srv, Session& s) {
     SlowPacket a;
     a.sid = s.sid;
@@ -114,6 +147,7 @@ int main() {
     Session sess; sess.recvWindow = 7200;
     bool connected = false;
 
+     /* faz o 3-way handshake inicial */
     if (!doThreeWayHandshake(net, srv, sess)) return 1;
     connected = true; cout << "[sucesso] Conectado.\n";
 
@@ -129,6 +163,7 @@ int main() {
         if (line.empty()) continue;
         char cmd = tolower(line[0]);
 
+        /*────────────────── enviar dados ──────────────────*/
         if (cmd == 'd') {
             if (!connected) { cout << "[erro] sem sessão (use r)\n"; continue; }
             cout << "# Mensagem: ";
@@ -159,6 +194,7 @@ int main() {
                 }
 
                 size_t chunk = min<size_t>({MAX_DATA, msg.size() - off, freeWin});
+                /* Monta pacote de dados (pode ser fragmento) */
                 SlowPacket p;
                 p.sid = sess.sid;
                 p.flags = ACK | ((off + chunk < msg.size()) ? MOREBITS : 0);
@@ -175,6 +211,7 @@ int main() {
                 sess.bytesInFlight += chunk;
                 off += chunk;
 
+                /* Aguarda ACK correspondente */
                 SlowPacket a; sockaddr_in from{};
                 while (net.receivePacket(a, from, sess)) {
                     if ((a.flags & ACK) && a.acknum == lastSeq) {
@@ -190,6 +227,7 @@ int main() {
             cout << "[sucesso] Mensagem enviada (" << msg.size() << " B)\n";
         }
 
+        /*────────────────── disconnect ──────────────────*/
         else if (cmd == 'x') {
             if (!connected) { cout << "[já desconectado]\n"; continue; }
 
@@ -208,6 +246,7 @@ int main() {
             } else cout << "[erro] sem ACK do disconnect.\n";
         }
 
+        /*────────────────── revive ──────────────────*/
         else if (cmd == 'r') {
             if (connected) { cout << "[aviso] Já conectado. Use x.\n"; continue; }
 
@@ -236,9 +275,11 @@ int main() {
                 connected = true; cout << "[revive OK]\n";
             } else cout << "[revive rejeitado]\n";
         }
-
+        /*────────────────── status ──────────────────*/
         else if (cmd == '?') showStatus(sess, connected, HOST, PORT);
+        /*────────────────── ajuda ──────────────────*/
         else if (cmd == 'h') help();
+        /*────────────────── quit ──────────────────*/
         else if (cmd == 'q') { cout << "[tchau] sessão encerrada!\n"; break; }
         else cout << "[erro] comando inválido. 'h' ajuda.\n";
     }
