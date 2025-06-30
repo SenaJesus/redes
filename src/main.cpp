@@ -9,42 +9,37 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <limits>
 using namespace std;
 
-constexpr auto TL = u8"\u2554";
-constexpr auto TR = u8"\u2557";
-constexpr auto BL = u8"\u255A";
-constexpr auto BR = u8"\u255D";
-constexpr auto HL = u8"\u2550";
-constexpr auto VL = u8"\u2551";
+constexpr auto TL = u8"\u2554", TR = u8"\u2557";
+constexpr auto BL = u8"\u255A", BR = u8"\u255D";
+constexpr auto HL = u8"\u2550", VL = u8"\u2551";
 
-inline void hLine(const char* left, const char* right, int width, const string& title = "") {
-    cout << left;
-    if (!title.empty()) cout << ' ' << title << ' ';
-    int fill = width - 2 - (title.empty() ? 0 : int(title.size()) + 2);
+inline void hLine(const char* l, const char* r, int w, const string& t = "") {
+    cout << l;
+    if (!t.empty()) cout << ' ' << t << ' ';
+    int fill = w - 2 - (t.empty() ? 0 : int(t.size()) + 2);
     while (fill-- > 0) cout << HL;
-    cout << right << '\n';
+    cout << r << '\n';
 }
 
-inline void vLine(const string& body, int width) {
+inline void vLine(const string& body, int w) {
     cout << VL << ' ' << body;
-    int pad = width - 2 - 1 - int(body.size());
-    if (pad < 0) pad = 0;
+    int pad = w - 3 - int(body.size());
     while (pad-- > 0) cout << ' ';
     cout << VL << '\n';
 }
 
 inline void printPktBox(const string& tag, const SlowPacket& p) {
     ios old(nullptr); old.copyfmt(cout);
-    vector<string> rows; rows.reserve(4);
-    stringstream ss;
+    vector<string> rows; stringstream ss;
 
     ss << "SID  : ";
     for (uint8_t b : p.sid) ss << hex << setw(2) << setfill('0') << int(b);
-    rows.push_back(ss.str()); ss.str(""); ss.clear();
+    rows.push_back(ss.str()); ss.str(""); ss.clear(); ss.copyfmt(old);
 
-    ss.copyfmt(old);
-    ss << "FLG  : " << setw(3) << left << flagsToString(p.flags) << "  STTL: " << p.sttl;
+    ss << "FLG  : " << flagsToString(p.flags) << "  STTL: " << p.sttl;
     rows.push_back(ss.str()); ss.str(""); ss.clear();
 
     ss << "SEQ  : " << p.seqnum << "   ACK : " << p.acknum;
@@ -53,15 +48,14 @@ inline void printPktBox(const string& tag, const SlowPacket& p) {
     ss << "WIN  : " << p.window << "   FID/FO: " << int(p.fid) << '/' << int(p.fo);
     rows.push_back(ss.str());
 
-    int width = 0;
-    for (auto& r : rows) width = max(width, int(r.size()));
-    width += 3;
+    int w = 0;
+    for (auto& r : rows) w = max(w, int(r.size()));
+    w += 3;
 
-    hLine(TL, TR, width, tag);
-    for (auto& r : rows) vLine(r, width);
-    hLine(BL, BR, width);
+    hLine(TL, TR, w, tag);
+    for (auto& r : rows) vLine(r, w);
+    hLine(BL, BR, w);
     cout << '\n';
-
     cout.copyfmt(old);
 }
 
@@ -77,20 +71,35 @@ inline void help() {
             "?) status            h) ajuda        q) sair\n";
 }
 
-static void showStatus(const Session& s, bool conn, const char* h, int p) {
+static void showStatus(const Session& s, bool conn, const char* host, int port) {
     ostringstream ss;
-    ss << "Servidor : " << h << ':' << p << '\n'
+    ss << "Servidor : " << host << ':' << port << '\n'
        << "Conexão  : " << (conn ? "[CONECTADO]" : "[DESCONECTADO]") << '\n'
        << "Janela   : " << s.remoteWindow << " B\n"
        << "Em voo   : " << s.bytesInFlight << " B\n"
        << "SEQ/ACK  : " << s.seqnum << " / " << s.acknum;
-    string txt = ss.str(); istringstream is(txt);
+
     string l; size_t w = 0; vector<string> rows;
+    istringstream is(ss.str());
     while (getline(is, l)) { rows.push_back(l); w = max(w, l.size()); }
+
     string bord(w + 4, '-');
     cout << "┌" << bord << "┐\n";
     for (auto& r : rows) cout << "│  " << left << setw(w) << r << "  │\n";
     cout << "└" << bord << "┘\n\n";
+}
+
+static void sendPureAck(Network& net, const sockaddr_in& srv, Session& s) {
+    SlowPacket a;
+    a.sid = s.sid;
+    a.flags = ACK;
+    a.seqnum = s.seqnum;
+    a.acknum = s.acknum;
+    a.window = s.recvWindow;
+    a.sttl = s.sttl;
+
+    uint32_t dummy;
+    net.sendPacket(srv, a, dummy, s);
 }
 
 int main() {
@@ -110,27 +119,41 @@ int main() {
     if (!doThreeWayHandshake(net, srv, sess)) return 1;
     connected = true; cout << "[sucesso] Conectado.\n";
 
-    string cmd;
     while (true) {
-        banner(); if (!(cin >> cmd)) break;
+        banner();
+        string line; if (!getline(cin, line)) break;
 
-        if (cmd == "d") {
+        auto trim = [&](string& s) {
+            auto b = s.find_first_not_of(" \t\r\n");
+            auto e = s.find_last_not_of(" \t\r\n");
+            s = (b == string::npos) ? "" : s.substr(b, e - b + 1);
+        };
+        trim(line);
+        if (line.empty()) continue;
+        char cmd = tolower(line[0]);
+
+        if (cmd == 'd') {
             if (!connected) { cout << "[erro] sem sessão (use r)\n"; continue; }
-            cin.ignore();
-            cout << "# Mensagem: "; string msg; getline(cin, msg);
+
+            cout << "# Mensagem: ";
+            string msg; getline(cin, msg);
             if (msg.empty()) continue;
 
-            size_t off = 0; uint8_t fid = Session::generateUUID()[0]; uint8_t fo = 0;
+            bool willFrag = msg.size() > MAX_DATA;
+            uint8_t fid = willFrag ? Session::generateUUID()[0] : 0;
+            uint8_t fo = 0;
+            size_t off = 0;
 
             while (off < msg.size()) {
                 size_t freeWin = sess.remoteWindow - sess.bytesInFlight;
                 if (!freeWin) {
+                    sendPureAck(net, srv, sess);
                     SlowPacket ack; sockaddr_in f{};
                     if (net.receivePacket(ack, f) && (ack.flags & ACK)) {
                         sess.remoteWindow = ack.window;
                         sess.bytesInFlight = 0;
                         sess.acknum = ack.seqnum;
-                        cout << "[DEBUG] Janela atualizada: " << ack.window << "\n";
+                        cout << "[debug] Janela atualizada: " << ack.window << '\n';
                     }
                     continue;
                 }
@@ -139,13 +162,13 @@ int main() {
 
                 SlowPacket p;
                 p.sid = sess.sid;
-                p.flags = ACK; if (off + chunk < msg.size()) p.flags |= MOREBITS;
+                p.flags = ACK | (off + chunk < msg.size() ? MOREBITS : 0);
                 p.seqnum = ++sess.seqnum;
                 p.acknum = sess.acknum;
                 p.window = sess.recvWindow;
                 p.sttl = sess.sttl;
-                p.fid = fid;
-                p.fo = fo++;
+                p.fid = willFrag ? fid : 0;
+                p.fo = willFrag ? fo++ : 0;
                 p.data.assign(msg.begin() + off, msg.begin() + off + chunk);
 
                 uint32_t lastSeq;
@@ -159,7 +182,7 @@ int main() {
                         sess.remoteWindow = a.window;
                         sess.bytesInFlight = 0;
                         sess.acknum = a.seqnum;
-                        cout << "[DEBUG] Janela atualizada: " << a.window << "\n";
+                        cout << "[debug] Janela atualizada: " << a.window << '\n';
                         break;
                     }
                 }
@@ -167,33 +190,67 @@ int main() {
             cout << "[sucesso] Mensagem enviada (" << msg.size() << " B)\n";
         }
 
-        else if (cmd == "x") {
+        else if (cmd == 'x') {
             if (!connected) { cout << "[já desconectado]\n"; continue; }
 
             SlowPacket disc;
-            disc.sid = sess.sid; disc.flags = CONNECT | REVIVE | ACK;
-            disc.seqnum = ++sess.seqnum; disc.acknum = sess.acknum;
+            disc.sid = sess.sid;
+            disc.flags = CONNECT | REVIVE | ACK;
+            disc.seqnum = ++sess.seqnum;
+            disc.acknum = sess.acknum;
 
-            uint32_t last; net.sendPacket(srv, disc, last, sess);
+            uint32_t last;
+            net.sendPacket(srv, disc, last, sess);
 
             SlowPacket resp; sockaddr_in from{};
             if (net.receivePacket(resp, from) && (resp.flags & ACK)) {
-                connected = false; sess.bytesInFlight = 0;
+                connected = false;
+                sess.bytesInFlight = 0;
                 cout << "[sucesso] Desconectado.\n";
-            } else cout << "[erro] sem ACK do disconnect.\n";
+            } else {
+                cout << "[erro] sem ACK do disconnect.\n";
+            }
         }
 
-        else if (cmd == "r") {
-            if (connected) { cout << "[AVISO] Já conectado. Use x.\n"; continue; }
-            if (!tryRevive(net, srv, sess)) cout << "[revive rejeitado]\n";
-            else { connected = true; cout << "[revive OK]\n"; }
+        else if (cmd == 'r') {
+            if (connected) { cout << "[aviso] Já conectado. Use x.\n"; continue; }
+
+            cout << "\nMensagem para revive? (ENTER = padrão) : ";
+            cout.flush();
+            string payload; getline(cin, payload);
+            if (payload.empty()) payload = "revive";
+            cout << '\n';
+
+            SlowPacket r;
+            r.sid = sess.sid;
+            r.flags = REVIVE | ACK;
+            r.seqnum = ++sess.seqnum;
+            r.acknum = sess.acknum;
+            r.window = sess.recvWindow;
+            r.sttl = sess.sttl;
+            r.data.assign(payload.begin(), payload.end());
+
+            uint32_t lastSeq;
+            net.sendPacket(srv, r, lastSeq, sess);
+
+            SlowPacket resp; sockaddr_in from{};
+            if (net.receivePacket(resp, from) && (resp.flags & (ACK | ACCEPT))) {
+                sess.acknum = resp.seqnum;
+                sess.remoteWindow = resp.window;
+                sess.bytesInFlight = 0;
+                connected = true;
+                cout << "[revive OK]\n";
+            } else {
+                cout << "[revive rejeitado]\n";
+            }
         }
 
-        else if (cmd == "?") showStatus(sess, connected, HOST, PORT);
-        else if (cmd == "h") help();
-        else if (cmd == "q") { cout << "[tchau] sessão encerrada!\n"; break; }
+        else if (cmd == '?') showStatus(sess, connected, HOST, PORT);
+        else if (cmd == 'h') help();
+        else if (cmd == 'q') { cout << "[tchau] sessão encerrada!\n"; break; }
         else cout << "[erro] comando inválido. 'h' ajuda.\n";
     }
+
     net.closeSocket();
     return 0;
 }

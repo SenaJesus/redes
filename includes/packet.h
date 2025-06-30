@@ -11,21 +11,30 @@
 #include <algorithm>
 
 enum SLOWFlags : uint8_t {
-    CONNECT  = 1 << 4,
-    REVIVE   = 1 << 3,
-    ACK      = 1 << 2,
-    ACCEPT   = 1 << 1,
+    CONNECT = 1 << 4,
+    REVIVE = 1 << 3,
+    ACK = 1 << 2,
+    ACCEPT = 1 << 1,
     MOREBITS = 1 << 0
 };
 
-inline std::string flagsToString(uint8_t f) {
-    std::string s;
-    if (f & CONNECT ) s += 'C';
-    if (f & REVIVE  ) s += 'R';
-    if (f & ACK     ) s += 'A';
-    if (f & ACCEPT  ) s += 'P';
-    if (f & MOREBITS) s += 'M';
-    return s.empty() ? "-" : s;
+inline std::string flagsToString(uint8_t f, bool longNames = true)
+{
+    std::vector<std::string> v;
+    auto push = [&](uint8_t m, const char* shortN, const char* longN) { if (f & m) v.emplace_back(longNames ? longN : shortN); };
+
+    push(CONNECT, "C", "CONNECT");
+    push(REVIVE, "R", "REVIVE");
+    push(ACK, "A", "ACK");
+    push(ACCEPT, "P", "ACCEPT");
+    push(MOREBITS, "M", "MOREBITS");
+
+    if (v.empty()) return "-";
+
+    std::string out = v[0];
+    for (size_t i = 1; i < v.size(); ++i) out += (longNames ? "|" : "") + v[i];
+
+    return out;
 }
 
 struct SlowPacket {
