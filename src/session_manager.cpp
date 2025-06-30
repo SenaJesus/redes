@@ -4,12 +4,16 @@
 using namespace std;
 
 bool doThreeWayHandshake(Network& net, sockaddr_in& srv, Session& s) {
-    SlowPacket syn; syn.flags = CONNECT; syn.window = s.recvWindow;
+    SlowPacket syn;
+    syn.flags = CONNECT;
+    syn.window = s.recvWindow;
+
     uint32_t last;
     if (!net.sendPacket(srv, syn, last, s)) return false;
 
-    SlowPacket setup; sockaddr_in from{};
-    if (!net.receivePacket(setup, from) || !(setup.flags & ACCEPT)) {
+    SlowPacket setup;
+    sockaddr_in from{};
+    if (!net.receivePacket(setup, from, s) || !(setup.flags & ACCEPT)) {
         cerr << "[HANDSHAKE] FAIL – SETUP inválido\n";
         return false;
     }
@@ -20,27 +24,35 @@ bool doThreeWayHandshake(Network& net, sockaddr_in& srv, Session& s) {
     s.remoteWindow = setup.window;
     s.bytesInFlight = 0;
     s.connected = true;
+    s.sttl = setup.sttl;
 
     cout << "[HANDSHAKE] concluído! janela=" << s.remoteWindow << " B\n";
     return true;
 }
 
 bool tryRevive(Network& net, sockaddr_in& srv, Session& s) {
-    SlowPacket r; r.sid = s.sid; r.flags = REVIVE | ACK;
-    r.seqnum = ++s.seqnum; r.acknum = s.acknum;
+    SlowPacket r;
+    r.sid = s.sid;
+    r.flags = REVIVE | ACK;
+    r.seqnum = ++s.seqnum;
+    r.acknum = s.acknum;
     r.data.assign({'r', 'e', 'v', 'i', 'v', 'e'});
 
-    uint32_t last; net.sendPacket(srv, r, last, s);
+    uint32_t last;
+    net.sendPacket(srv, r, last, s);
 
-    SlowPacket resp; sockaddr_in from{};
-    if (!net.receivePacket(resp, from)) return false;
+    SlowPacket resp;
+    sockaddr_in from{};
+    if (!net.receivePacket(resp, from, s)) return false;
 
     if (resp.flags & (ACK | ACCEPT)) {
         s.acknum = resp.seqnum;
         s.remoteWindow = resp.window;
         s.bytesInFlight = 0;
         s.connected = true;
+        s.sttl = resp.sttl;
         return true;
     }
+
     return false;
 }
