@@ -66,39 +66,53 @@ bool doThreeWayHandshake(Network& net, sockaddr_in& srv, Session& s) {
 }
 
 /**
- * @brief Tenta retomar uma sessão anterior com o flag REVIVE.
+ * @brief Tenta retomar uma sessão anterior (zero-way revive).
  *
- * Envia um pacote com REVIVE|ACK e payload indicativo.
- * Se o servidor responder com ACK ou ACCEPT, a sessão é reativada.
+ * O cliente envia um pacote **REVIVE | ACK** contendo o UUID da sessão
+ * e um pequeno payload (“revive”).  A resposta VÁLIDA do servidor deve
+ * obrigatoriamente trazer o bit **ACCEPT** (sessão pronta) e, conforme
+ * o PDF, também deve carregar **ACK** confirmando o nosso último seq.
  *
- * @param net Interface de rede.
- * @param srv Endereço do servidor.
- * @param s Sessão contendo o UUID a ser reativado.
- * @return true se o revive for aceito, false caso contrário.
+ * Se (ACCEPT && ACK) estiverem presentes, os campos da estrutura
+ * Session são atualizados e a conexão volta ao estado “connected”.
+ *
+ * @param net  Interface de rede já inicializada.
+ * @param srv  Endereço UDP do servidor SLOW.
+ * @param s    Sessão local que se deseja reviver.
+ * @return     true  se o revive foi aceito;  
+ *             false se rejeitado ou timeout.
  */
-bool tryRevive(Network& net, sockaddr_in& srv, Session& s) {
+bool tryRevive(Network& net, sockaddr_in& srv, Session& s)
+{
+    /* -------- envia REVIVE ------------------------------------ */
     SlowPacket r;
     r.sid = s.sid;
     r.flags = REVIVE | ACK;
     r.seqnum = ++s.seqnum;
     r.acknum = s.acknum;
-    r.data.assign({'r','e','v','i','v','e'});
+    r.data.assign({'r','e','v','i','v','e'});   // payload opcional
 
     uint32_t dummy;
     net.sendPacket(srv, r, dummy, s);
 
+    /* -------- aguarda resposta -------------------------------- */
     SlowPacket resp;
     sockaddr_in from{};
-    if (!net.receivePacket(resp, from, s)) return false;
+    if (!net.receivePacket(resp, from, s))
+        return false;                      // timeout / erro de rede
 
-    if (resp.flags & (ACK | ACCEPT)) {
-        // sessão reativada com sucesso
-        s.acknum = resp.seqnum;
-        s.remoteWindow = resp.window;
-        s.bytesInFlight = 0;
-        s.connected = true;
-        s.sttl = resp.sttl;
-        return true;
-    }
-    return false;
+    /* -------- valida bits ------------------------------------- */
+    bool hasAccept = resp.flags & ACCEPT;
+    bool hasAck = resp.flags & ACK;
+
+    if (!hasAccept || !hasAck)             // precisa dos DOIS bits
+        return false;
+
+    /* -------- atualiza estado da sessão ----------------------- */
+    s.acknum = resp.seqnum;
+    s.remoteWindow = resp.window;
+    s.bytesInFlight = 0;
+    s.connected = true;
+    s.sttl = resp.sttl;           // espelha STTL mais recente
+    return true;
 }
