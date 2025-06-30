@@ -2,8 +2,31 @@
 #include "packet.h"
 #include <iostream>
 using namespace std;
+/**
+ * @file    session_manager.cpp
+ * @brief   Implementação da lógica de handshakes para sessões SLOW.
+ *
+ * Este arquivo define as funções que coordenam o estabelecimento e a
+ * reativação de sessões. O formato dos pacotes e o uso das flags CONNECT,
+ * ACCEPT, ACK e REVIVE seguem o comportamento especificado do protocolo.
+ * Logs de diagnóstico são impressos durante os processos para auxiliar na depuração.
+ */
 
+/**
+ * @brief Estabelece uma nova sessão usando o 3-way handshake.
+ *
+ * Envia um pacote com a flag CONNECT e a janela de recepção local.
+ * Aguarda resposta com a flag ACCEPT e, se válida, inicializa os campos da sessão
+ * com os dados recebidos do servidor. O número de sequência local é ajustado.
+ *
+ * @param net Interface de rede.
+ * @param srv Endereço do servidor.
+ * @param s Sessão a ser inicializada.
+ * @return true em caso de sucesso, false se qualquer etapa falhar.
+ */ 
 bool doThreeWayHandshake(Network& net, sockaddr_in& srv, Session& s) {
+
+    // envia CONNECT com a janela local
     SlowPacket syn;
     syn.flags = CONNECT;
     syn.window = s.recvWindow;
@@ -11,6 +34,7 @@ bool doThreeWayHandshake(Network& net, sockaddr_in& srv, Session& s) {
     uint32_t dummy;
     net.sendPacket(srv, syn, dummy, s);
 
+    //aguarda pacote com ACCEPT do servidor
     SlowPacket setup;
     sockaddr_in from{};
     if (!net.receivePacket(setup, from, s) || !(setup.flags & ACCEPT)) {
@@ -18,6 +42,7 @@ bool doThreeWayHandshake(Network& net, sockaddr_in& srv, Session& s) {
         return false;
     }
 
+    //inicializa a sessão local com os dados recebidos
     s.sid = setup.sid;
     s.seqnum = setup.seqnum + 1;
     s.acknum = setup.seqnum;
@@ -40,6 +65,17 @@ bool doThreeWayHandshake(Network& net, sockaddr_in& srv, Session& s) {
     return true;
 }
 
+/**
+ * @brief Tenta retomar uma sessão anterior com o flag REVIVE.
+ *
+ * Envia um pacote com REVIVE|ACK e payload indicativo.
+ * Se o servidor responder com ACK ou ACCEPT, a sessão é reativada.
+ *
+ * @param net Interface de rede.
+ * @param srv Endereço do servidor.
+ * @param s Sessão contendo o UUID a ser reativado.
+ * @return true se o revive for aceito, false caso contrário.
+ */
 bool tryRevive(Network& net, sockaddr_in& srv, Session& s) {
     SlowPacket r;
     r.sid = s.sid;
@@ -56,6 +92,7 @@ bool tryRevive(Network& net, sockaddr_in& srv, Session& s) {
     if (!net.receivePacket(resp, from, s)) return false;
 
     if (resp.flags & (ACK | ACCEPT)) {
+        // sessão reativada com sucesso
         s.acknum = resp.seqnum;
         s.remoteWindow = resp.window;
         s.bytesInFlight = 0;

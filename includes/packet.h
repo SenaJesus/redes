@@ -1,5 +1,13 @@
 #ifndef PACKET_H
 #define PACKET_H
+/**
+ * @file    packet.h
+ * @brief   Declarações do pacote SLOW.
+ *
+ * Define a enumeração de flags, a estrutura SlowPacket e utilitários
+ * de serialização/registro.  O layout de bits e a ordem dos campos
+ * seguem exatamente o formato especificado para o protocolo SLOW.
+ */
 
 #include "slow.h"
 #include <array>
@@ -18,6 +26,11 @@ enum SLOWFlags : uint8_t {
     MOREBITS = 1 << 0
 };
 
+/**
+ * @brief Converte um bitmap de flags em string legível.
+ * @param f         Bitmap de flags.
+ * @param longNames Se true, usa nomes completos; senão, abreviados.
+ */
 inline std::string flagsToString(uint8_t f, bool longNames = true)
 {
     std::vector<std::string> v;
@@ -37,6 +50,14 @@ inline std::string flagsToString(uint8_t f, bool longNames = true)
     return out;
 }
 
+/**
+ * @struct SlowPacket
+ * @brief   Representa um pacote completo do protocolo SLOW.
+ *
+ * Inclui cabeçalho e payload.  Os métodos de serialização/
+ * desserialização geram e interpretam o formato
+ * conforme especificado.
+ */
 struct SlowPacket {
     std::array<uint8_t, UUID_SIZE> sid{};
     uint8_t flags = 0;
@@ -57,6 +78,7 @@ struct SlowPacket {
 void packLE(uint8_t* dst, uint32_t v, int nbytes);
 uint32_t unpackLE(const uint8_t* src, int nbytes);
 
+/* ───────── Utilitários de log ───────── */
 namespace detail {
 
 inline void hLine(const char* left, const char* right, int boxW, const std::string& title = "") {

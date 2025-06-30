@@ -6,10 +6,27 @@
 #include <sys/select.h>
 using namespace std;
 
+/**
+ * @file    network.cpp
+ * @brief Implementação da lógica de envio e recepção confiável sobre UDP no protocolo SLOW.
+ *
+ * Envia pacotes via UDP, recebe respostas, gerencia timeout e
+ * retransmissão, e controla a janela de envio segundo os limites
+ * da sessão remota. Pacotes com payload são mantidos em buffer
+ * até serem confirmados por ACK.
+ */
+
+ 
+/**
+ * @brief Adiciona um pacote enviado à fila de pendentes.
+ */
 void Network::pushPending(const uint8_t* buf, size_t len, uint32_t seq, size_t dsz) {
     pend.emplace_back(buf, len, seq, dsz);
 }
 
+/**
+ * @brief Remove da fila os pacotes já confirmados via ACK.
+ */
 void Network::dropAcked(uint32_t ack, Session& sess) {
     while (!pend.empty() && pend.front().seq <= ack) {
         sess.bytesInFlight -= pend.front().dataSz;
@@ -17,6 +34,14 @@ void Network::dropAcked(uint32_t ack, Session& sess) {
     }
 }
 
+/**
+ * @brief Reenvia o primeiro pacote pendente, se necessário.
+ *
+ * Se o tempo decorrido desde o último envio exceder RETRY_MS,
+ * tenta retransmitir até MAX_TRIES. Após isso, descarta o pacote.
+ *
+ * @return true se houve retransmissão; false se nada foi feito.
+ */
 bool Network::retransmit(const sockaddr_in& addr, Session& sess) {
     if (pend.empty()) return false;
     Pending& p = pend.front();
@@ -42,6 +67,9 @@ bool Network::createSocket() {
     return sockfd >= 0;
 }
 
+/**
+ * @brief Envia um pacote pela rede e gerencia janela de envio.
+ */
 bool Network::sendPacket(const sockaddr_in& addr, const SlowPacket& pkt, uint32_t& lastSeq, Session& sess) {
     uint8_t buf[MAX_PACKET]; size_t len;
     pkt.serialize(buf, len);
@@ -51,6 +79,7 @@ bool Network::sendPacket(const sockaddr_in& addr, const SlowPacket& pkt, uint32_
         string prev(pkt.data.begin(), pkt.data.begin() + show);
         cout << "✉  DATA (" << pkt.data.size() << " B): \"" << prev << (pkt.data.size() > show ? "…" : "") << "\"\n\n";
     }
+    // se exceder a janela da outra ponta, aguarda ACK
     if (sess.bytesInFlight + pkt.data.size() > sess.remoteWindow) {
         cerr << "[FLOW] janela cheia, aguardando ACK\n";
         lastSeq = pkt.seqnum;
@@ -60,13 +89,18 @@ bool Network::sendPacket(const sockaddr_in& addr, const SlowPacket& pkt, uint32_
     if (sent != static_cast<ssize_t>(len)) return false;
     sess.bytesInFlight += pkt.data.size();
     lastSeq = pkt.seqnum;
+    // se for pacote com dados, adiciona à fila para retransmissão
     pushPending(buf, len, pkt.seqnum, pkt.data.size());
     return true;
 }
 
+/**
+ * @brief Tenta receber um pacote, com timeout e suporte a retransmissão.
+ */
 bool Network::receivePacket(SlowPacket& pkt, sockaddr_in& from, Session& sess) {
     uint8_t buf[MAX_PACKET]; socklen_t alen = sizeof(from);
     fd_set rf; FD_ZERO(&rf); FD_SET(sockfd, &rf);
+    // espera até 500ms por um pacote
     timeval tv{0, 500000};
     int ready = select(sockfd + 1, &rf, nullptr, nullptr, &tv);
     if (ready == 0) {
@@ -82,6 +116,7 @@ bool Network::receivePacket(SlowPacket& pkt, sockaddr_in& from, Session& sess) {
         string prev(pkt.data.begin(), pkt.data.begin() + show);
         cout << "✉  DATA (" << pkt.data.size() << " B): \"" << prev << (pkt.data.size() > show ? "…" : "") << "\"\n\n";
     }
+    // atualiza sttl e controle de janela
     sess.sttl = pkt.sttl;
     if (pkt.flags & ACK) {
         dropAcked(pkt.acknum, sess);

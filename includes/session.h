@@ -1,10 +1,30 @@
 #ifndef SESSION_H
 #define SESSION_H
 
+/**
+ * @file    session.h
+ * @brief   Estrutura e utilitários para o gerenciamento de uma sessão SLOW.
+ *
+ * Cada sessão mantém seu UUID (16 bytes), seqnum e acknum
+ * e controle de janela, exatamente como especificado para o protocolo.
+ */
+
 #include "slow.h"
 #include <array>
 #include <cstdint>
 
+/**
+ * @struct Session
+ * @brief  Representa o estado de uma única sessão de transporte SLOW.
+ *
+ * Campos:
+ *  • sid           – UUID da sessão (16 B)  
+ *  • seqnum/acknum – controle de fluxo  
+ *  • sttl          – _Session-TTL_ (valor imposto pelo central)  
+ *  • recvWindow    – janela de recepção local  
+ *  • remoteWindow  – janela anunciada pelo peer  
+ *  • bytesInFlight – bytes enviados ainda não confirmados
+ */
 struct Session {
     std::array<uint8_t, 16> sid{};
     uint32_t seqnum = 0;
