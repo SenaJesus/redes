@@ -65,6 +65,16 @@ Você verá o prompt interativo:
 
 Digite `d` para enviar dados, `x` para desconectar, `r` para revive, `?` para status, `h` para ajuda e `q` para sair.
 
+## Teste com Fragmentação
+
+No diretório principal do projeto há um arquivo chamado `test.in`, criado para testar o cliente em condições que exigem fragmentação. Esse arquivo contém uma mensagem muito longa suficiente para ultrapassar os limites de `MAX_DATA` e da janela de envio, forçando o cliente a dividir o conteúdo em múltiplos fragmentos numerados com `FID` fixo e `FO` incremental. Após o envio da mensagem, o arquivo também comanda a desconexão (`x`) e o encerramento do programa (`q`), cobrindo o fluxo completo da aplicação.
+
+Para executar esse teste  utilize o comando:
+
+```
+./bin/slow_peripheral < test.in
+```
+
 ## Exemplos de Execução
 
 Suponha um arquivo exemplo.in com o seguinte conteúdo:
