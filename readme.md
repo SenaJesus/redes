@@ -3,7 +3,7 @@
 ## Autores
 
 - **Jesus Sena Fernandes** - 12697470  
-- **Letícia Raddatz Jönck** - 14609637  
+- **Letícia Raddatz Jönck** - 14589066
 - **Nicolas Carreiro Rodrigues** - 14600801  
 
 ## Requisitos
